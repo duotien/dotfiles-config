@@ -5,6 +5,7 @@ return {
 
   config = function()
     local telescope = require("telescope")
+    local actions = require("telescope.actions")
 
     telescope.setup({
       defaults = {
@@ -13,6 +14,14 @@ return {
         -- path_display = { "smart" },
         -- layout_config = { prompt_position = "top" },
         -- sorting_strategy = "ascending",
+        initial_mode = "normal",
+        mappings = {
+          n = { ["<C-c>"] = actions.close, },
+          i = {
+            ["<C-h>"] = actions.which_key,
+            ["<C-c>"] = false,
+          },
+        }
       },
     })
 
