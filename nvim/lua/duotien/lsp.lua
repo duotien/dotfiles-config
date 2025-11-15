@@ -40,7 +40,7 @@ function M.setup()
       map("n", "]d", function() vim.diagnostic.jump({ count = 1, float = true }) end, "Next Diagnostic")
 
       -- Misc
-      map("n", "<leader>ps", "<cmd>LspRestart<CR>", "Restart LSP")
+      map("n", "<leader>pr", "<cmd>LspRestart<CR>", "Restart LSP")
     end,
   })
 end
