@@ -11,5 +11,6 @@ vim.g.maplocalleader = "\\"
 local map = require("duotien.core.utils").map
 
 map("n", "<leader>pv", vim.cmd.Ex, "Open Netrw")
+map("n", "<leader>ps", "<cmd>e $MYVIMRC<CR>", "Open $MYVIMRC")
 
 -- for lsp config, go to ../lsp.lua (gf)
