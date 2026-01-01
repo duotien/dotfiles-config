@@ -7,7 +7,13 @@ vim.lsp.config('pyright', {
         python = {
             analysis = {
                 -- Ignore all files for analysis to exclusively use Ruff for linting
-                ignore = { '*' },
+                -- ignore = { '*' },
+                typeCheckingMode = "standard",
+
+                -- for `uv`
+                autoSearchPaths = true,
+                useLibraryCodeForTypes = true,
+                autoImportCompletions = true,
             },
         },
     },
