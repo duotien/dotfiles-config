@@ -22,7 +22,7 @@ vim.opt.termguicolors = true -- True color support
 
 -- set leader key before lazy
 
-vim.cmd("colorscheme novel")
+-- vim.cmd("colorscheme novel")
 
 require("duotien.core.remap")
 require("duotien.core.autocmds")
