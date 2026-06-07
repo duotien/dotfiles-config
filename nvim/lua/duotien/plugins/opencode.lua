@@ -26,7 +26,7 @@ return {
     vim.g.opencode_opts = {
       server = {
         start = function()
-          require("snacks.terminal").open("opencode --port", {
+          require("snacks.terminal").get("opencode --port", {
             win = {
               position = "right",
               enter = false,
