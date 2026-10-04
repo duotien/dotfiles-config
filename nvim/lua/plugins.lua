@@ -7,4 +7,5 @@ return {
     require("plugins.whichkey"),
     require("plugins.colorscheme"),
     require("plugins.minipairs"),
+    require("plugins.opencode"),
 }

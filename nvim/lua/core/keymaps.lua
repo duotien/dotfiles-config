@@ -16,3 +16,8 @@ map("n", "<leader>gs", function() require("snacks.picker").git_status() end, { d
 
 -- snack-picker: colorschemes
 map("n", "<leader>uc", function() require("snacks.picker").colorschemes() end, { desc = "Colorscheme" })
+map("n", "<leader>uh", function() require("snacks.notifier").show_history() end, { desc = "Notification history" })
+
+-- opencode
+map({ "n", "v" }, "<leader>oa", function() require("opencode").ask("@this: ") end, { desc = "Ask OpenCode" })
+map({ "n", "v" }, "<leader>ox", function() require("opencode").select() end, { desc = "Select OpenCode" })
