@@ -3,4 +3,5 @@ return {
     require("plugins.lsp"),
     require("plugins.completion"),
     require("plugins.neovim"),
+    require("plugins.dashboard"),
 }
