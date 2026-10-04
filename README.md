@@ -9,12 +9,14 @@ This repository contains my personal dotfiles configuration for a customized dev
 ## Features
 
 ### Neovim Configuration
-- Uses lazy.nvim for plugin management
+- lazy.nvim v11 for plugin management (`lazy-lock.json` pins all plugins)
+- Modular layout: `init.lua` (entry point) + `lua/core/` (options, keymaps, autocmds, LSP keymaps) + `lua/plugins/` (per-domain plugin specs)
+- LSP via Mason v2: pyright (Python) and lua_ls (Lua), with nvim-cmp completion
+- snacks.nvim: dashboard, fuzzy picker (files/grep/buffers/git), notifier, zen mode, smooth scroll, quickfile, bigfile
+- which-key.nvim keybinding popups, tokyonight colorscheme
+- OpenCode v2 integration (`<leader>oa`/`<leader>ox`)
+- mini.pairs auto-pairing, lazydev for `vim.*` completion in this config
 - Custom keybindings with leader key (space) and local leader (\)
-- LSP (Language Server Protocol) integration with code completion, diagnostics, and navigation
-- Custom UI settings (line numbers, colors, etc.)
-- Multiple color schemes available (monokai, novel, etc.)
-- Plugin configurations for LSP, treesitter, telescope, etc.
 
 ### Zsh Configuration
 - Syntax highlighting with zsh-syntax-highlighting plugin
@@ -33,6 +35,10 @@ This repository contains my personal dotfiles configuration for a customized dev
 - Neovim >= 0.11
 - Zsh shell
 - Tmux
+- git (plugin manager bootstrap, LSP servers via Mason)
+- uv (Python environments for LSP; per-project `[tool.pyright] venv` config)
+- OpenCode v2 (optional, for `<leader>oa`/`<leader>ox`)
+- Nerd Font (recommended — plugin icons; JetBrainsMono Nerd Font used here)
 
 ## Installation
 
@@ -59,7 +65,7 @@ Create symbolic link for Neovim configuration:
 ln -s $(pwd)/nvim ~/.config/nvim
 ```
 
-Neovim configuration will be automatically loaded when you start Neovim.
+Start Neovim once; the lazy.nvim bootstrap in `init.lua` clones the plugin manager, and `:Lazy sync` installs the pinned plugins and Mason LSP servers.
 
 ### Tmux Setup
 Create symbolic link for Tmux configuration:
@@ -76,7 +82,9 @@ ln -s $(pwd)/tmux ~/.config/tmux
 - Line numbers and relative line numbers enabled
 - Tab settings: 4 spaces for indentation
 - True color support enabled
-- Custom color scheme "novel"
+- Colorscheme: tokyonight (storm style)
+- Plugin specs live in `nvim/lua/plugins/` (one file per domain: treesitter, lsp, completion, snacks, whichkey, colorscheme, minipairs, opencode, neovim)
+- Core behavior lives in `nvim/lua/core/` (options, keymaps, autocmds, lsp)
 
 ### Zsh
 - Syntax highlighting enabled
@@ -96,11 +104,12 @@ ln -s $(pwd)/tmux ~/.config/tmux
 ## Usage Tips
 
 ### Neovim
-- Use `<Space>` as leader key for custom mappings
-- `<C-h>` in insert mode for signature help
-- `K` to show documentation
-- `<leader>pv` to open Netrw file explorer
-- `<leader>ps` to open Neovim configuration file
+- Use `<Space>` as leader key; pause to see the which-key popup
+- `<leader>ff` / `<leader>fg` / `<leader>fb` — find files / live grep / buffers
+- `<leader>gl` / `<leader>gs` — git log / git status
+- `<leader>z` — zen mode
+- `K` for hover docs; `[d` / `]d` for diagnostics in LSP buffers
+- `<leader>oa` / `<leader>ox` — ask / select in OpenCode (v2 daemon required)
 
 ### Zsh
 - Use custom aliases `ls` and `la` for colored directory listings
@@ -120,7 +129,7 @@ For detailed keybindings, please see [KEYBINDINGS.md](KEYBINDINGS.md).
 To customize any component:
 1. Modify the relevant configuration files in the respective directories
 2. Restart the application to see changes
-3. For Neovim, plugins can be managed in `nvim/lua/duotien/plugins/`
+3. For Neovim, plugin specs live in `nvim/lua/plugins/` (aggregated by `nvim/lua/plugins.lua`) and core behavior in `nvim/lua/core/`
 
 ## Contributing
 
