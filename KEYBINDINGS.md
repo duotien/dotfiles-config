@@ -5,36 +5,40 @@ This document outlines all the custom keybindings used in this dotfiles configur
 ## Neovim Keybindings
 
 ### General
-- `<Space>` - Leader key
-- `<C-h>` in insert mode - Signature help
-- `K` - Show documentation
-- `<leader>pv` - Open Netrw file explorer
+- `<Space>` - Leader key (`\` is the local leader)
 - `<leader>ps` - Open Neovim configuration file
-- `<leader>q` - Write buffer and return to Netrw file explorer (does not exit Neovim; use `:qa` to quit)
+- `<leader>pv` - Open Netrw file explorer
+- `<leader>z` - Zen mode (snacks; press again to exit)
+- `<Space>` (pause) - which-key popup showing all mappings
 
-### LSP (Language Server Protocol)
-- `gd` - Go to definition
-- `gR` - Find references (Telescope)
-- `gi` - Go to implementation (Telescope)
-- `gt` - Type definition (Telescope)
-- `<leader>D` - Show buffer diagnostics (Telescope)
-- `K` - Show documentation
+### Finder (snacks picker)
+- `<leader>ff` - Find files
+- `<leader>fg` - Live grep
+- `<leader>fb` - Find buffers
+- `<leader>uc` - Colorscheme picker (live preview)
+
+### Git (snacks picker)
+- `<leader>gl` - Git log
+- `<leader>gs` - Git status (`<Tab>` toggles staging)
+
+### LSP (buffer-local, active when a language server attaches)
+- `K` - Hover docs
 - `<C-h>` in insert mode - Signature help
-- `<leader>vrn` - Rename symbol
-- `<leader>vrr` - Go to references
-- `<leader>vf` - Format code
 - `<leader>vca` - Code action
-- `<leader>vw` - Workspace symbols
-- `<leader>vd` - Show line diagnostics
+- `<leader>vrn` - Rename symbol
+- `<leader>vf` - Format buffer
+- `<leader>vd` - Diagnostics float on current line
 - `[d` - Previous diagnostic
 - `]d` - Next diagnostic
-- `<leader>pr` - Restart LSP
+- `<leader>pr` - Restart LSP client
 
-### Navigation
-- `<leader>ff` - Find files (Telescope)
-- `<leader>fg` - Find live grep (Telescope)
-- `<leader>fb` - Find buffers (Telescope)
-- `<leader>fh` - Find help (Telescope)
+### LSP built-ins (no config, Nvim native)
+- `gd` - Go to definition
+- `gD` - Go to declaration
+- `gi` - Go to implementation
+- `gO` - Document symbols
+- `gr` - References (split) / `grr` - References (quickfix)
+- `gy` - Go to type definition
 
 ## Zsh Keybindings
 
@@ -51,16 +55,3 @@ This document outlines all the custom keybindings used in this dotfiles configur
 
 ### Mouse Support
 - Mouse support is enabled for scrolling and clicking
-
-## Custom Keybindings
-
-### Neovim
-- Leader key is set to space (`<Space>`)
-- Local leader is set to backslash (`\`)
-
-### Zsh
-- Prompt shows username and current directory
-- Right-side timestamp display
-
-### Tmux
-- Custom color scheme
