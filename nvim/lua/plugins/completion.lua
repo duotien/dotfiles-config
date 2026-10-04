@@ -3,7 +3,12 @@ return {
     {
         "hrsh7th/nvim-cmp",
         event = "InsertEnter",
-        dependencies = { "hrsh7th/cmp-nvim-lsp", "hrsh7th/cmp-buffer", "hrsh7th/cmp-path" },
+        dependencies = {
+            "hrsh7th/cmp-nvim-lsp",
+            "hrsh7th/cmp-buffer",
+            "hrsh7th/cmp-path",
+            { "nvim-lsp/nvim-lsp-file-operations", opts = {} }, -- LSP-aware rename/create/move of files
+        },
         config = function()
             local cmp = require("cmp")
             cmp.setup({

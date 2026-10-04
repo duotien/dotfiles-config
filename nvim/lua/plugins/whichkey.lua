@@ -8,6 +8,7 @@ return {
             { "<leader>v", group = "views" },
             { "<leader>p", group = "project" },
             { "<leader>u", group = "ui" },
+            { "<leader>o", group = "opencode" },
         },
     },
 }
