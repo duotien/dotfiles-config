@@ -7,7 +7,7 @@ return {
             "hrsh7th/cmp-nvim-lsp",
             "hrsh7th/cmp-buffer",
             "hrsh7th/cmp-path",
-            { "nvim-lsp/nvim-lsp-file-operations", opts = {} }, -- LSP-aware rename/create/move of files
+            "antosha417/nvim-lsp-file-operations",
         },
         config = function()
             local cmp = require("cmp")

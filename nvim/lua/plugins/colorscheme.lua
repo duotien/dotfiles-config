@@ -9,4 +9,12 @@ return {
     opts = {
         style = "storm", -- dark; other variants: moon, night
     },
+    -- second scheme, switched via :colorscheme monokai-pro or <leader>uc
+    {
+        "loctvl842/monokai-pro.nvim",
+        lazy = true,
+        opts = {
+            filter = "pro", -- variants: classic, octagon, machine, ristretto, spectrum, light
+        },
+    },
 }
