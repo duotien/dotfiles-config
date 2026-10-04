@@ -10,6 +10,7 @@ This document outlines all the custom keybindings used in this dotfiles configur
 - `K` - Show documentation
 - `<leader>pv` - Open Netrw file explorer
 - `<leader>ps` - Open Neovim configuration file
+- `<leader>q` - Write buffer and return to Netrw file explorer (does not exit Neovim; use `:qa` to quit)
 
 ### LSP (Language Server Protocol)
 - `gd` - Go to definition
