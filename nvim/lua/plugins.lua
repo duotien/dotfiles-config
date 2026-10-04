@@ -3,5 +3,6 @@ return {
     require("plugins.lsp"),
     require("plugins.completion"),
     require("plugins.neovim"),
-    require("plugins.dashboard"),
+    require("plugins.snacks"),
+    require("plugins.whichkey"),
 }
