@@ -5,4 +5,5 @@ return {
     require("plugins.neovim"),
     require("plugins.snacks"),
     require("plugins.whichkey"),
+    require("plugins.colorscheme"),
 }
