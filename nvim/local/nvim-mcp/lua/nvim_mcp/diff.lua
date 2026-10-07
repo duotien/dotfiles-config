@@ -388,17 +388,19 @@ function M.decide()
 
     -- User saved mid-review: the remaining (unresolved) hunks are kept
     -- AS SHOWN — their new lines stay, but the choice lines must not reach
-    -- disk. Strip them (guarded by the MARKER text; stale positions from
-    -- mid-review edits are left alone — the user's buffer is the truth).
+    -- disk. Strip by CONTENT (full-buffer scan), not stored positions:
+    -- mid-review user edits shift lines, and a position-based strip leaks
+    -- the moved markers to disk (live-reproduced 2026-10-07). MARKER is
+    -- scaffolding; a user line that happens to equal it verbatim is a
+    -- documented 1-in-a-million edge.
     if p.user_saved then
-        for i, h in ipairs(p.hunks) do
-            if h.resolved == nil then
-                local line = vim.api.nvim_buf_get_lines(p.buf, h.sl, h.sl + 1, false)[1]
-                if line == MARKER then
-                    vim.api.nvim_buf_set_lines(p.buf, h.sl, h.sl + 1, false, {})
-                    shift(p, i, -1)
-                end
-            end
+        local lines = vim.api.nvim_buf_get_lines(p.buf, 0, -1, false)
+        local kept = {}
+        for _, l in ipairs(lines) do
+            if l ~= MARKER then kept[#kept + 1] = l end
+        end
+        if #kept ~= #lines then
+            vim.api.nvim_buf_set_lines(p.buf, 0, -1, false, kept)
         end
     end
 

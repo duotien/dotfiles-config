@@ -115,7 +115,7 @@ reviewed proposal)
 | nvim restarts **during** review | `rejected: nvim restarted during review - please re-run the edit` (the pending diff lived in the old instance's memory) |
 | Two proposals overlap | second one: `rejected: another proposal is pending` (multi-file edits = sequential per-file rounds) |
 | `u` (undo) pressed **during** review | `aborted: review disturbed (undo?) - nothing written` — the guard detects the disturbed render and no disk write happens; re-run the edit to re-propose |
-| `:w` **during** review | `resolved: user-saved, N unresolved hunk(s) kept as shown - buffer is the file` — the session ends; remaining choice lines are stripped; no double write |
+| `:w` **during** review | `resolved: user-saved, N unresolved hunk(s) kept as shown - buffer is the file` — the session ends; remaining choice lines are stripped by content (robust to your mid-review edits); no double write |
 | hunk with `old_text == new_text` | `Rejected: hunk N: old_text and new_text are identical (no-op edit)` |
 
 ## Development notes
