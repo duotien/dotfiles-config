@@ -142,8 +142,14 @@ editable mid-review, decisions are per-hunk (`<CR>` on `a`/`r`, cursor-follow
 `ct`/`co`), and on full resolution Python writes the BUFFER content to disk
 (folding in user edits). `propose_edit` gained an `edits[]` param (legacy
 `old_str`/`new_str` wraps to one hunk). An "aborted" state guards
-undo-disturbed reviews. Usage: README.md; tracking:
-`.epic-tasks/nvim-mcp-avante-style/`.
+undo-disturbed reviews. Task2 added `]x`/`[x` hunk navigation, auto-jump
+after each decision, and `:undojoin` chaining (one `u` reverts the whole
+session). Task3 hardened the edges: `:w` mid-review ends the session
+(buffer is the file; remaining choice lines stripped, no double write),
+restart-during-review is detected by nvim PID and degrades to a clean
+rejection, identical old/new and empty `edits` are validation rejects, and
+the edge sweep (line-1/EOF/adjacent/multi-line hunks) passes. Usage:
+README.md; tracking: `.epic-tasks/nvim-mcp-avante-style/`.
 
 ## Conventions (repo)
 - gate: `zsh -n zsh/.zshenv zsh/.zshrc zsh/alias.sh && nvim --headless +q`

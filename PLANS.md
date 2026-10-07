@@ -96,15 +96,25 @@ user's nvim; one key decides; the agent learns the outcome. Full docs:
   signature). So `lua/nvim_mcp/diff.lua` is two non-blocking entry points
   (`render()` paints + arms `a`/`r`/`q`; `decide()` returns nil or the decision), and the
   human-in-the-loop is a 200 ms Python poll loop. nvim's main loop stays free between polls.
+  Reworked to the MULTI-HUNK contract (epic `nvim-mcp-avante-style`, tasks 1–3):
+  `render(path, edits[])` paints N hunks at once — new text as real `DiffAdd` lines,
+  old text as `virt_lines` ghosts, per-hunk `>>> [a]ccept [r]eject` choice line; the
+  buffer stays editable; `decide()` returns nil / a resolved summary / a user-saved
+  summary (`:w` mid-review ends the session, buffer is the file) / an aborted
+  summary (undo-disturbed review). Decisions are per hunk (`a`/`r`+`<CR>`, `ct`/`co`),
+  `]x`/`[x` walk hunks with auto-jump; the render+decisions chain into one undo step.
 - **Socket discovery:** this build has no `nvim --server-list` → glob
   `$XDG_RUNTIME_DIR/nvim.<pid>.0`, probe liveness (sockets linger after death), prefer the
   TTY-holding instance (the one a human is looking at).
-- **Safety invariants:** the disk write happens only after a rendered proposal is accepted;
-  dirty (unsaved-divergent) buffers are rejected with "save first"; a dead/restarted nvim is
-  a clean rejection string, never a traceback; on accept AND on true reject the buffer's
-  `modified` flag is cleared (no leftover `+`/W12).
+- **Safety invariants:** the disk write happens only after a rendered proposal is
+  resolved; the BUFFER content is what gets written (mid-review user edits fold in);
+  dirty (unsaved-divergent) buffers are rejected with "save first"; a dead/restarted
+  nvim (detected by socket path AND nvim PID) is a clean rejection string, never a
+  traceback; identical old/new hunks and empty `edits` are validation rejects; on
+  accept AND on true reject the buffer's `modified` flag is cleared (no leftover
+  `+`/W12).
 - **Ops:** the daemon does not auto-respawn a killed MCP server — reconnect via `/mcps` in
   the TUI or a session restart; after editing `diff.lua`, clear the require cache
   (`:lua package.loaded['nvim_mcp.diff'] = nil`).
-- Status: task1+task2 done (E2E proven from a real edit-ask session), task3 (hardening +
-  docs) in progress — `.epic-tasks/nvim-mcp/`.
+- Status: original tasks 1–3 done; the multi-hunk rework epic
+  `.epic-tasks/nvim-mcp-avante-style/` (tasks 1–3) in progress.

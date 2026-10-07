@@ -58,6 +58,8 @@ def propose_edit(
             return f"Rejected: hunk {i}: old_text must be a non-empty string."
         if not isinstance(new, str):
             return f"Rejected: hunk {i}: new_text must be a string (empty = delete)."
+        if old == new:
+            return f"Rejected: hunk {i}: old_text and new_text are identical (no-op edit)."
         n = text.count(old)
         if n == 0:
             return f"Rejected: hunk {i}: old_text not found in the file - read the file first"
@@ -79,4 +81,5 @@ def propose_edit(
     if buf_text != disk_text:
         p.write_text(buf_text + "\n")
         nvim_bridge.mark_clean(path)
-    return f"Accepted: {decision} - buffer written to disk."
+        return f"Accepted: {decision} - buffer written to disk."
+    return f"Accepted: {decision} - disk already up to date (no write)."

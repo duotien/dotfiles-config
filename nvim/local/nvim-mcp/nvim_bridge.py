@@ -13,10 +13,12 @@ that is the nvim a human is looking at.
 
 Resilience (task3): the MCP server process outlives nvim restarts, so the
 cached connection can go stale — run_lua drops it on a transport error and
-re-attaches once. show_diff never raises: a missing/unreachable nvim (or a
-restart during review, which loses the pending state) is a clean rejection
-string the agent can report. The disk write in propose_edit is gated behind
-a successful render, so no failure path can write blindly.
+re-attaches once. Mid-review the poll loop is STICKY (no re-discovery): a
+dropped connection is a clean "nvim restarted" rejection, never a wander to
+a different instance. show_diff never raises: a missing/unreachable nvim
+(or a restart during review, which loses the pending state) is a clean
+rejection string the agent can report. The disk write in propose_edit is
+gated behind a successful render, so no failure path can write blindly.
 """
 
 import glob
@@ -103,7 +105,7 @@ def invalidate() -> None:
 
 def run_lua(code: str, args: list) -> Any:
     try:
-        return attach().exec_lua(code, args)
+        return _exec_lua(code, args)
     except OSError:
         # Transport-level failure (e.g. user restarted nvim, socket died):
         # drop the cache, rediscover, retry ONCE. Lua-level errors (pynvim
@@ -111,6 +113,21 @@ def run_lua(code: str, args: list) -> Any:
         # half-executed render could double-apply it.
         invalidate()
         return attach().exec_lua(code, args)
+
+
+def _exec_lua(code: str, args: list, allow_rediscovery: bool = True) -> Any:
+    """run_lua core. With allow_rediscovery=False a transport failure raises
+    instead of re-attaching via discovery — mid-review the poll loop must
+    NEVER wander to a different (e.g. the user's other) instance: the
+    pending state lives in the rendered instance's module scope, and a
+    re-discovery that lands elsewhere would poll the wrong nvim's decide().
+    """
+    nvim = _nvim
+    if nvim is None:
+        if not allow_rediscovery:
+            raise OSError("nvim connection lost")
+        nvim = attach()
+    return nvim.exec_lua(code, args)
 
 
 def mark_clean(path: str) -> None:
@@ -171,16 +188,34 @@ def show_diff(path: str, edits: list) -> str:
         # The pending diff lives in THIS instance's module scope. If nvim
         # restarts mid-review, run_lua transparently re-attaches to a fresh
         # instance whose pending is nil — decide() would then poll forever.
+        # Detect it by SOCKET PATH and by nvim PID (a restart on the same
+        # socket path keeps the path but changes the pid).
         render_socket = _nvim_path
+        render_pid = run_lua("return vim.fn.getpid()", [])
         # Human-in-the-loop, but on OUR side: poll with small non-blocking
         # RPC calls. nvim's main loop stays free between polls, so keypresses
         # fire keymaps normally and the UI redraws. (Blocking RPC chunks
         # wedge this build's event loop — see diff.lua header.)
+        # The polling RPCs are STICKY: on a transport failure we reject
+        # immediately instead of re-attaching via discovery. Discovery
+        # prefers TTY instances, so a mid-review reconnect could wander to
+        # a different nvim (e.g. the user's other instance) whose module
+        # has no pending state — decide() would then poll nil forever, or
+        # worse, commands would run in the wrong instance.
+        REJECT_RESTART = "rejected: nvim restarted during review - please re-run the edit"
         while True:
             time.sleep(0.2)
             if _nvim_path != render_socket:
-                return "rejected: nvim restarted during review - please re-run the edit"
-            decision = run_lua("return require('nvim_mcp.diff').decide()", [])
+                return REJECT_RESTART
+            try:
+                if _exec_lua("return vim.fn.getpid()", [], allow_rediscovery=False) != render_pid:
+                    return REJECT_RESTART
+                decision = _exec_lua(
+                    "return require('nvim_mcp.diff').decide()", [], allow_rediscovery=False
+                )
+            except OSError:
+                invalidate()
+                return REJECT_RESTART
             if decision is not None:
                 return decision
     except Exception as e:  # noqa: BLE001 - surface a clean MCP string, not a traceback

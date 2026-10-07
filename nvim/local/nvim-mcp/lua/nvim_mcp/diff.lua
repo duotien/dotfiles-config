@@ -8,6 +8,9 @@
 --   require('nvim_mcp.diff').decide()
 --     -> nil                   (any hunk still unresolved)
 --     -> "resolved: applied=N, rejected=M"  (cleaned up; pending cleared)
+--     -> "resolved: user-saved, N unresolved..." (:w mid-review ENDS the
+--                               session — the buffer the user saved IS the
+--                               file; remaining choice lines are stripped)
 --     -> "aborted: ..."        (undo/external change disturbed the review;
 --                               nothing was written)
 --
@@ -42,6 +45,7 @@
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("nvim_mcp_diff")
+local AUG = "nvim_mcp_diff" -- autocmd group (BufWritePost: :w ends the review)
 
 local MARKER = ">>> [a]ccept   [r]eject"
 local COL_A = MARKER:find("a", 1, true) - 1
@@ -198,10 +202,12 @@ local function resolve(p, i, action)
         shift(p, i, #h.old_lines - 1 - h.count)
     end
     h.resolved = action
-    -- Chain the decision into the render's undo unit (render is already one
-    -- unit in this build) so, absent user edits, ONE `u` reverts the whole
-    -- session. Only after a real mutation (never on the no-op/aborted paths).
-    pcall(vim.cmd, "undojoin")
+    -- Undo granularity (documented limitation of this build): the render is
+    -- ONE undo unit (all mutations in one RPC stage), but each decision is
+    -- its own unit — `:undojoin` only joins a single pair here and cannot
+    -- chain onto an already-joined entry (verified with a minimal probe).
+    -- `u` therefore steps back one decision at a time, which also lets the
+    -- user undo an individual decision.
     local j = next_unresolved(p, i, 1)
     if j then
         jump_to(p, j)
@@ -255,17 +261,23 @@ function M.render(path, edits)
 
     local km = { buffer = buf }
     local hunks = {}
-    -- Render sequentially on the live buffer; find_old per hunk keeps the
-    -- positions honest as earlier hunks shift the text.
+    -- Render sequentially on the live buffer. Positions come from the DISK
+    -- matches + a running offset: a live re-search would re-match inside
+    -- previously inserted choice lines (MARKER contains "a", "c", "e", ...)
+    -- and corrupt the hunk layout. The buffer equals disk here (dirty
+    -- guard), so disk offsets + insertions from earlier hunks are exact.
+    local offset = 0
     for i, e in ipairs(edits) do
-        local m = find_old(buf, e.old_text) -- live buffer: earlier hunks shifted it
-        local sl, el = m[1], m[3]
+        local m = matches[i]
+        local sl, el = m[1] + offset, m[3] + offset
         local old_lines = vim.api.nvim_buf_get_lines(buf, sl, el + 1, false)
         -- "" = pure delete: vim.split("", ...) would yield {""} (one real
         -- empty line) — special-case it to zero lines.
         local new_lines = e.new_text == "" and {}
             or vim.split(e.new_text, "\n", { includeempty = true })
         local count = #new_lines
+
+        offset = offset + (1 + count - #old_lines) -- choice line + net replace
 
         -- replace old span with new lines, insert choice line above
         vim.api.nvim_buf_set_lines(buf, sl, el + 1, false, new_lines)
@@ -334,6 +346,20 @@ function M.render(path, edits)
         if pending then nav(pending, -1) end
     end, opts)
 
+    -- :w mid-review ENDS the session: the buffer the user saved IS the file.
+    -- decide() then strips remaining choice lines and returns a user-saved
+    -- summary; Python skips the disk write (buffer == disk).
+    local ag = vim.api.nvim_create_augroup(AUG, { clear = true })
+    vim.api.nvim_create_autocmd("BufWritePost", {
+        buffer = buf,
+        group = ag,
+        callback = function()
+            if pending and pending.buf == buf then
+                pending.user_saved = true
+            end
+        end,
+    })
+
     pending = { buf = buf, hunks = hunks, km = km }
     vim.api.nvim_win_set_cursor(0, { hunks[1].sl + 1, 0 }) -- first hunk
     vim.cmd("echo 'nvim-mcp: " .. #hunks .. " hunk(s) pending - [a]/[r]+<CR> on a choice line, ct/co at a hunk, ]x/[x to walk'")
@@ -341,16 +367,38 @@ function M.render(path, edits)
     return "rendered"
 end
 
---- Non-blocking check. Returns nil while any hunk is unresolved; when all
---- are resolved, cleans up and returns the summary string.
+--- Non-blocking check. Returns nil while any hunk is unresolved (and no
+--- :w happened); when all are resolved — or the user saved mid-review —
+--- cleans up and returns the summary string.
 function M.decide()
     local p = pending
     if not p then
         return nil
     end
+    local all_resolved = true
     for _, h in ipairs(p.hunks) do
         if not h.resolved then
-            return nil -- still waiting
+            all_resolved = false
+            break
+        end
+    end
+    if not (all_resolved or p.user_saved) then
+        return nil -- still waiting
+    end
+
+    -- User saved mid-review: the remaining (unresolved) hunks are kept
+    -- AS SHOWN — their new lines stay, but the choice lines must not reach
+    -- disk. Strip them (guarded by the MARKER text; stale positions from
+    -- mid-review edits are left alone — the user's buffer is the truth).
+    if p.user_saved then
+        for i, h in ipairs(p.hunks) do
+            if h.resolved == nil then
+                local line = vim.api.nvim_buf_get_lines(p.buf, h.sl, h.sl + 1, false)[1]
+                if line == MARKER then
+                    vim.api.nvim_buf_set_lines(p.buf, h.sl, h.sl + 1, false, {})
+                    shift(p, i, -1)
+                end
+            end
         end
     end
 
@@ -360,17 +408,24 @@ function M.decide()
     pcall(vim.keymap.del, "n", "co", p.km)
     pcall(vim.keymap.del, "n", "]x", p.km)
     pcall(vim.keymap.del, "n", "[x", p.km)
+    pcall(vim.api.nvim_del_augroup_by_name, AUG)
     vim.api.nvim_buf_clear_namespace(p.buf, ns, 0, -1)
 
-    local a, r, ab = 0, 0, 0
+    local a, r, ab, un = 0, 0, 0, 0
     for _, h in ipairs(p.hunks) do
         if h.resolved == "applied" then a = a + 1
         elseif h.resolved == "rejected" then r = r + 1
-        else ab = ab + 1 end
+        elseif h.resolved == "aborted" then ab = ab + 1
+        else un = un + 1 end
     end
     vim.cmd("redraw!")
     if ab > 0 then
         return "aborted: review disturbed (undo?) - nothing written"
+    end
+    if p.user_saved then
+        return string.format(
+            "resolved: user-saved, %d unresolved hunk(s) kept as shown - buffer is the file",
+            un)
     end
     return string.format("resolved: applied=%d, rejected=%d", a, r)
 end
