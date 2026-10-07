@@ -74,7 +74,7 @@ The render never steals your view:
 
 - target buffer open in a window of the **current tab** → hop to it
 - open in **another tab** → switch tab + hop
-- **not open** → open in a **split** in the current window
+- **not open** → open in a **vertical split** in the current window
 
 If the current window is a float, the split is taken from a normal window
 instead (the float keeps its place). The split is **not** auto-closed after

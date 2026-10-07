@@ -226,7 +226,7 @@ function M.render(path, edits)
     -- Show the target buffer WITHOUT stealing the user's view (task1):
     --   open in a window of the current tab -> hop to it (no-op if already there)
     --   open in another tab                 -> tab-switch + hop
-    --   not open anywhere                   -> :split in the current window
+    --   not open anywhere                   -> :vsplit in the current window
     -- A float current window splits from a normal one instead (keeps the
     -- float in place); with no normal window at all (pathological), fall
     -- back to the old :edit behavior. No auto-close after the decision —
@@ -250,7 +250,7 @@ function M.render(path, edits)
                 end
             end
         end
-        if not pcall(vim.cmd, "split " .. vim.fn.fnameescape(path)) then
+        if not pcall(vim.cmd, "vsplit " .. vim.fn.fnameescape(path)) then
             vim.cmd("edit " .. vim.fn.fnameescape(path))
         end
     end
