@@ -1,5 +1,5 @@
 return {
-    "nickjvandyke/opencode.nvim",
+    "duotien/opencode.nvim", -- our fork; upstream sync via dev clone (~/Workspaces/GIT/opencode.nvim)
     enabled = vim.g.opts.opencode,
     -- main branch = OpenCode v2 (what we run)
     config = function(opts)
