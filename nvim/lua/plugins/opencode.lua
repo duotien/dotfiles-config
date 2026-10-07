@@ -1,7 +1,7 @@
 return {
     "duotien/opencode.nvim", -- our fork; upstream sync via dev clone (~/Workspaces/GIT/opencode.nvim)
     enabled = vim.g.opts.opencode,
-    -- main branch = OpenCode v2 (what we run)
+    branch = "staging",      -- track the fork's staging branch
     config = function(opts)
         vim.g.opencode_opts = opts
     end,
