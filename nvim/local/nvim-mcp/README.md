@@ -111,6 +111,8 @@ accident; `<CR>` off a choice-line letter is a no-op.
 | Tool | Purpose |
 |---|---|
 | `propose_edit(path, edits=[{old_text, new_text}, …])` | The review-gated edit. Validates each `old_text` occurs exactly once (sequentially, in order), renders all hunks, returns the decision string. Legacy `old_str`/`new_str` wraps to one hunk. |
+| `current_buffer()` | What the user is looking at (focused window): `{path, modified, line, col}` — the agent's target when the user says "this file". `path` is `""` for no-file buffers. |
+| `get_selection()` | The active visual selection: `{mode, path, start_line, end_line, text}` (truncated to ~200 lines / 8000 chars), or `{active: false}` when nothing is selected. The range is derived from a ~10 Hz mode+cursor poll that captures the visual entry position as the anchor — this nvim build never sets the `'<'/'>'` marks and has no `VisualMode` event, so the anchor must be captured on the Python side. |
 | `ping()` | Health check; proves the "one Python file per tool" extension pattern. |
 
 Adding a tool = one file in `tools/` + one `mcp.tool()(fn)` line in

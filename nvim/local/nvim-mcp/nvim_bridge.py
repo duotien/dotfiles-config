@@ -25,6 +25,7 @@ import glob
 import os
 import socket as _socket
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -32,6 +33,9 @@ import pynvim
 
 _nvim = None
 _nvim_path = None
+# pynvim's sync session is not thread-safe; the visual-anchor poller thread
+# shares it with tool calls, so serialize every RPC.
+_rpc_lock = threading.Lock()
 
 
 def _has_tty(pid: int) -> bool:
@@ -112,7 +116,7 @@ def run_lua(code: str, args: list) -> Any:
         # raises nvim.error, not OSError) are NOT retried — re-running a
         # half-executed render could double-apply it.
         invalidate()
-        return attach().exec_lua(code, args)
+        return _exec_lua(code, args)
 
 
 def _exec_lua(code: str, args: list, allow_rediscovery: bool = True) -> Any:
@@ -127,7 +131,80 @@ def _exec_lua(code: str, args: list, allow_rediscovery: bool = True) -> Any:
         if not allow_rediscovery:
             raise OSError("nvim connection lost")
         nvim = attach()
-    return nvim.exec_lua(code, args)
+    with _rpc_lock:
+        return nvim.exec_lua(code, args)
+
+
+# ---------------------------------------------------------------------------
+# Visual-mode tracking (get_selection tool).
+#
+# BUILD QUIRK: this custom 0.11.6 build never sets the '< / '> marks during
+# (or after) visual mode — getpos("'<") is {0,0,0,0} even with real
+# keystrokes (verified live) — and the VisualMode/ModeChanged autocmd
+# events do not exist, so nothing inside nvim can tell us when a selection
+# STARTED. The only missing piece of a selection is that start (the cursor
+# end moves and IS observable). So we poll mode + cursor at ~10 Hz and
+# capture the cursor position at the non-visual → visual transition: that
+# is the anchor. A human selection always spans more than one tick; if one
+# doesn't, get_selection degrades to range_unknown.
+_VISUAL_MODES = ("v", "V", "\x16")  # charwise, linewise, blockwise
+_visual_lock = threading.Lock()
+_visual_anchor: tuple[int, int] | None = None
+_anchor_conn: str | None = None
+
+
+def _mode_cursor() -> tuple[str, int, int]:
+    """(mode, line, col0) of the focused window, fresh RPC read."""
+    result = run_lua(
+        "return { vim.fn.mode(), table.unpack(vim.api.nvim_win_get_cursor(0)) }",
+        [],
+    )
+    return result[0], result[1], result[2]
+
+
+def _mode_poll_loop() -> None:
+    global _visual_anchor, _anchor_conn
+    while True:
+        time.sleep(0.1)
+        try:
+            mode, line, col = _mode_cursor()
+        except Exception:
+            # Unreachable nvim (restarted, closed): nothing to track; the
+            # next successful tick re-enters from scratch (anchor starts nil).
+            with _visual_lock:
+                _visual_anchor = None
+                _anchor_conn = None
+            continue
+        with _visual_lock:
+            if mode in _VISUAL_MODES:
+                if _visual_anchor is None:
+                    _visual_anchor = (line, col)
+                    _anchor_conn = _nvim_path
+            else:
+                _visual_anchor = None
+                _anchor_conn = None
+
+
+def start_poller() -> None:
+    """Start the visual-anchor poller (idempotent per process; server.py
+    calls it at import). Daemon thread — dies with the MCP server."""
+    threading.Thread(
+        target=_mode_poll_loop, name="nvim-mcp-visual-anchor", daemon=True
+    ).start()
+
+
+def get_visual_state() -> tuple[str, tuple[int, int], tuple[int, int] | None]:
+    """(mode, cursor, anchor) with a FRESH mode/cursor read.
+
+    The anchor is only valid if it was captured on the CURRENT instance —
+    after a reconnect to a different socket a stale anchor would describe
+    a selection in a dead nvim.
+    """
+    mode, line, col = _mode_cursor()
+    with _visual_lock:
+        anchor = _visual_anchor
+        same_instance = _anchor_conn is not None and _anchor_conn == _nvim_path
+    return mode, (line, col), (anchor if same_instance else None)
 
 
 def mark_clean(path: str) -> None:
