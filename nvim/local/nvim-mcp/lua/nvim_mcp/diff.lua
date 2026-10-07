@@ -30,6 +30,9 @@
 --   NEVER mapped — the choice-line guarantee from the cursor epic), and
 --   cursor-follow fast keys `ct`/`co`, which act on the hunk CONTAINING the
 --   cursor (choice line or new lines); a no-op anywhere else.
+-- Navigation: `]x`/`[x` walk to the next/previous UNRESOLVED hunk (wrapped,
+-- centered); after each decision the cursor auto-jumps to the next
+-- unresolved hunk. Render lands the cursor on the first hunk.
 --
 -- Build quirks (custom 0.11.6): virt_lines chunks must each be wrapped in
 -- their own array ({ { {text, hl} } }); nvim_win_get_cursor may return the
@@ -109,6 +112,63 @@ local function shift(p, idx, delta)
     end
 end
 
+--- Place the cursor on hunk `i`'s choice line, centered.
+local function jump_to(p, i)
+    local h = p.hunks[i]
+    if not h or h.resolved then return end
+    vim.api.nvim_win_set_cursor(0, { h.sl + 1, 0 })
+    vim.cmd("normal! zz")
+end
+
+--- Next unresolved hunk after index `from` walking `dir` (+1/-1), wrapping;
+--- nil when nothing is unresolved.
+local function next_unresolved(p, from, dir)
+    local n = #p.hunks
+    local i = from
+    for _ = 1, n do
+        i = i + dir
+        if i > n then i = 1 end
+        if i < 1 then i = n end
+        if not p.hunks[i].resolved then return i end
+    end
+    return nil
+end
+
+--- `]x` / `[x`: walk from the cursor to the next/prev UNRESOLVED hunk
+--- (resolved hunks are skipped; wraps around; no-op when none left).
+local function nav(p, dir)
+    local lnum = cursor_line()
+    local n = #p.hunks
+    local start
+    if dir == 1 then
+        for i = n, 1, -1 do
+            if not p.hunks[i].resolved and p.hunks[i].sl <= lnum then
+                start = i
+                break
+            end
+        end
+        start = start or 0 -- above all hunks: wrap from the end
+    else
+        for i = 1, n do
+            if not p.hunks[i].resolved and p.hunks[i].sl >= lnum then
+                start = i
+                break
+            end
+        end
+        start = start or (n + 1) -- below all hunks: wrap from the start
+    end
+    local i = start
+    for _ = 1, n do
+        i = i + dir
+        if i > n then i = 1 end
+        if i < 1 then i = n end
+        if not p.hunks[i].resolved then
+            jump_to(p, i)
+            return
+        end
+    end
+end
+
 --- Resolve hunk `i` as "applied" or "rejected".
 -- Region after render: choice line + new lines (old lines are GONE from the
 -- real buffer at render time — they live only in the ghost).
@@ -138,6 +198,14 @@ local function resolve(p, i, action)
         shift(p, i, #h.old_lines - 1 - h.count)
     end
     h.resolved = action
+    -- Chain the decision into the render's undo unit (render is already one
+    -- unit in this build) so, absent user edits, ONE `u` reverts the whole
+    -- session. Only after a real mutation (never on the no-op/aborted paths).
+    pcall(vim.cmd, "undojoin")
+    local j = next_unresolved(p, i, 1)
+    if j then
+        jump_to(p, j)
+    end
 end
 
 --- Paint all hunks and arm the decision keymaps. Returns immediately.
@@ -259,9 +327,16 @@ function M.render(path, edits)
         local h, i = hunk_at_cursor(pending)
         if h then resolve(pending, i, "rejected") end
     end, opts)
+    vim.keymap.set("n", "]x", function()
+        if pending then nav(pending, 1) end
+    end, opts)
+    vim.keymap.set("n", "[x", function()
+        if pending then nav(pending, -1) end
+    end, opts)
 
     pending = { buf = buf, hunks = hunks, km = km }
-    vim.cmd("echo 'nvim-mcp: " .. #hunks .. " hunk(s) pending - [a]/[r]+<CR> on a choice line, ct/co at a hunk'")
+    vim.api.nvim_win_set_cursor(0, { hunks[1].sl + 1, 0 }) -- first hunk
+    vim.cmd("echo 'nvim-mcp: " .. #hunks .. " hunk(s) pending - [a]/[r]+<CR> on a choice line, ct/co at a hunk, ]x/[x to walk'")
     vim.cmd("redraw!") -- force TUI frame; this build's UI lags buffer edits
     return "rendered"
 end
@@ -283,6 +358,8 @@ function M.decide()
     pcall(vim.keymap.del, "n", "<CR>", p.km)
     pcall(vim.keymap.del, "n", "ct", p.km)
     pcall(vim.keymap.del, "n", "co", p.km)
+    pcall(vim.keymap.del, "n", "]x", p.km)
+    pcall(vim.keymap.del, "n", "[x", p.km)
     vim.api.nvim_buf_clear_namespace(p.buf, ns, 0, -1)
 
     local a, r, ab = 0, 0, 0

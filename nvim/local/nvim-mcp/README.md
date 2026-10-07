@@ -55,32 +55,44 @@ free between polls, so keypresses fire keymaps and the UI redraws normally.
 ## Usage
 
 Ask the (routed) agent to edit a file. The call blocks until you decide in
-nvim. The diff appears in the target buffer, headed by a **choice line**
-above the old text:
+nvim. A proposal can carry **several hunks at once** — each is rendered
+in the target buffer as a **choice line** above the new text, with the old
+text ghosted as virtual lines:
 
 ```
 >>> [a]ccept   [r]eject
-qux = 200        ← old text (red)
-quux = 300       ← new text (green)
+quux = 300       ← new text (green, real line)
+   qux = 200     ← old text (ghost, not a real line)
 ```
 
-Navigate freely — the buffer is **readonly** while the proposal is pending.
-To decide, put the cursor on the `a` (or `r`) character of the choice line
-and press `<CR>`:
+The buffer stays **editable** while the proposal is pending — anything you
+type is folded into the disk write on resolution.
+
+Per-hunk decisions:
 
 | Action | Effect |
 |---|---|
-| cursor on `a` + `<CR>` | **accept** — the file is written to disk; the buffer's `+` flag is cleared (no `:w`) |
-| cursor on `r` + `<CR>` | **reject** — buffer restored byte-identical; the agent receives the rejection and adapts |
+| cursor on a hunk's `a` + `<CR>` | **accept** that hunk |
+| cursor on a hunk's `r` + `<CR>` | **reject** that hunk (its new lines revert to the old) |
+| `ct` / `co` anywhere on a hunk (choice line or new lines) | accept / reject **that** hunk, no cursor move needed |
+| `]x` / `[x` | walk to next / previous **unresolved** hunk (centered; wraps; skips decided ones) |
+
+After every decision the cursor auto-jumps to the next unresolved hunk, so
+a review is: `]x`-walk, `ct`/`co` or `a`/`r`+`<CR>`, repeat. When the last
+hunk is resolved, Python writes the **buffer content** to disk (your
+mid-review edits included), skips the write when nothing changed, and
+clears the buffer's `+` flag (no `:w`). The whole render+decisions chain
+into ONE undo step — a single `u` restores the pre-proposal buffer
+(unless you made your own edits in between).
 
 Plain `a`/`r` keys are never mapped, so normal navigation can't decide by
-accident; `<CR>` anywhere else is a no-op.
+accident; `<CR>` off a choice-line letter is a no-op.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `propose_edit(path, old_str, new_str)` | The review-gated edit. Validates `old_str` occurs exactly once on disk, renders the diff, returns the decision string. |
+| `propose_edit(path, edits=[{old_text, new_text}, …])` | The review-gated edit. Validates each `old_text` occurs exactly once (sequentially, in order), renders all hunks, returns the decision string. Legacy `old_str`/`new_str` wraps to one hunk. |
 | `ping()` | Health check; proves the "one Python file per tool" extension pattern. |
 
 Adding a tool = one file in `tools/` + one `mcp.tool()(fn)` line in
@@ -96,6 +108,7 @@ reviewed proposal)
 | No interactive nvim running / unreachable | `rejected: cannot reach nvim (…) — open nvim and retry` |
 | nvim restarts **during** review | `rejected: nvim restarted during review - please re-run the edit` (the pending diff lived in the old instance's memory) |
 | Two proposals overlap | second one: `rejected: another proposal is pending` (multi-file edits = sequential per-file rounds) |
+| `u` (undo) pressed **during** review | `aborted: review disturbed (undo?) - nothing written` — the guard detects the disturbed render and no disk write happens; re-run the edit to re-propose |
 
 ## Development notes
 
