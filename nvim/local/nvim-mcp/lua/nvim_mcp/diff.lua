@@ -1,12 +1,15 @@
--- diff.lua: in-buffer review of a proposed edit (NON-BLOCKING design).
+-- diff.lua: in-buffer review of a proposed MULTI-HUNK edit (NON-BLOCKING).
 --
 -- Two entry points, both non-blocking — called from Python over RPC:
---   require('nvim_mcp.diff').render(path, old_str, new_str)
---     -> "rendered"            (proposal on screen, awaiting decision)
---     -> "rejected: ..."       (could not even render, e.g. old_str missing)
+--   require('nvim_mcp.diff').render(path, edits)
+--     edits = { { old_text = "...", new_text = "..." }, ... }
+--     -> "rendered"            (proposal on screen, awaiting decisions)
+--     -> "rejected: ..."       (could not even render; buffer untouched)
 --   require('nvim_mcp.diff').decide()
---     -> nil                   (still waiting)
---     -> "accepted"|"rejected" (cleaned up + applied/undone; pending cleared)
+--     -> nil                   (any hunk still unresolved)
+--     -> "resolved: applied=N, rejected=M"  (cleaned up; pending cleared)
+--     -> "aborted: ..."        (undo/external change disturbed the review;
+--                               nothing was written)
 --
 -- Why non-blocking: a blocking RPC chunk (vim.wait/confirm INSIDE an
 -- exec_lua call) permanently wedges this nvim build's event loop —
@@ -16,32 +19,37 @@
 -- nvim's main loop is free, so keypresses fire keymaps normally and the
 -- UI redraws.
 --
--- Decision UX (choice-cursor): the choices are rendered IN the buffer as
--- a single marker line above the proposed change (two lines at both ends
--- read as two alternatives — user feedback 2026-10-07):
---     >>> [a]ccept   [r]eject
---     qux = 200            (red, old text)
---     quux = 300           (green, new text)
--- The buffer is readonly while pending (navigate freely, no accidental
--- edits). ONE buffer-local <CR> keymap decides, and only when the cursor
--- sits on the `a` or `r` character of the marker line — plain a/r/q keys
--- are never mapped, so navigation can no longer decide by accident.
+-- Decision UX (avante-style, 2026-10-07): each hunk renders as
+--     >>> [a]ccept   [r]eject      choice line (real line, per hunk)
+--     [ghost] old line              old text as virt_lines (virtual only)
+--     new line                      new text as REAL buffer lines
+-- The buffer stays EDITABLE (readonly guard removed): mid-review edits are
+-- folded into the disk write, which the PYTHON side performs on "resolved"
+-- using the buffer content. Two decision styles per hunk:
+--   <CR> with cursor on that hunk's `a`/`r` letter (safe: bare a/r are
+--   NEVER mapped — the choice-line guarantee from the cursor epic), and
+--   cursor-follow fast keys `ct`/`co`, which act on the hunk CONTAINING the
+--   cursor (choice line or new lines); a no-op anywhere else.
+--
+-- Build quirks (custom 0.11.6): virt_lines chunks must each be wrapped in
+-- their own array ({ { {text, hl} } }); nvim_win_get_cursor may return the
+-- position as a nested table (defensive unpack); nvim_buf_get_extmarks
+-- requires the 5th opts arg; no nvim_buf_clear_extmarks (loop over ids).
 
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("nvim_mcp_diff")
 
--- marker line + 0-based columns of the decision characters
 local MARKER = ">>> [a]ccept   [r]eject"
 local COL_A = MARKER:find("a", 1, true) - 1
 local COL_R = MARKER:find("r", 1, true) - 1
 
 vim.api.nvim_set_hl(0, "McpProposalChoice", { link = "Special" })
 vim.api.nvim_set_hl(0, "McpProposalKey", { link = "Todo" })
+vim.api.nvim_set_hl(0, "McpGhostOld", { link = "DiffDelete" })
 
 -- module scope: survives across RPC calls (the module loads once)
-local pending = nil -- { buf, sl, el, n, top, bottom, ids, prev_mod, opts }
-local decided = nil
+local pending = nil -- { buf, hunks = { hunk, ... }, km = { buffer = buf } }
 
 --- Find old_str in buffer `buf`. Returns {start_line, start_col, end_line, end_col}
 --- (0-based, end exclusive) or nil.
@@ -55,27 +63,93 @@ local function find_old(buf, old_str)
 
     local function to_linecol(off)
         local line, consumed = 0, 0
-        for i,l in ipairs(lines) do
+        for i, l in ipairs(lines) do
             if off <= consumed + #l then
-                return i-1, off - consumed
+                return i - 1, off - consumed
             end
-            consumed = consumed + #l +1
+            consumed = consumed + #l + 1
             line = i
         end
-        return #lines -1, #lines[#lines]
+        return #lines - 1, #lines[#lines]
     end
     local sl, sc = to_linecol(s - 1)
     local el, ec = to_linecol(e)
-    return {sl, sc, el, ec}
+    return { sl, sc, el, ec }
 end
 
---- Paint the proposal and arm the decision keymap. Returns immediately.
-function M.render(path, old_str, new_str)
+--- Cursor line (0-based) with defensive unpack (nested-table quirk).
+local function cursor_line()
+    local c = vim.api.nvim_win_get_cursor(0)
+    local row = c[1]
+    if type(row) == "table" then row = row[1] end
+    return row - 1
+end
+
+local function hunk_contains(h, lnum)
+    if h.resolved then return false end
+    if lnum == h.sl then return true end -- choice line
+    return h.count > 0 and lnum >= h.start and lnum < h.start + h.count
+end
+
+--- Unresolved hunk at the cursor, or nil.
+local function hunk_at_cursor(p)
+    local lnum = cursor_line()
+    for i, h in ipairs(p.hunks) do
+        if hunk_contains(h, lnum) then return h, i end
+    end
+    return nil
+end
+
+--- Shift the stored line numbers of hunks after `idx` by `delta`.
+local function shift(p, idx, delta)
+    if delta == 0 then return end
+    for j = idx + 1, #p.hunks do
+        p.hunks[j].sl = p.hunks[j].sl + delta
+        p.hunks[j].start = p.hunks[j].start + delta
+    end
+end
+
+--- Resolve hunk `i` as "applied" or "rejected".
+-- Region after render: choice line + new lines (old lines are GONE from the
+-- real buffer at render time — they live only in the ghost).
+-- applied: drop the choice line; new lines become plain content.
+-- rejected: restore old lines, then drop the choice line.
+local function resolve(p, i, action)
+    local h = p.hunks[i]
+    if h.resolved then return end
+    -- Sanity guard: an undo/redo (or external change) mid-review desyncs the
+    -- stored line numbers and drops the extmarks. Detect it via the choice
+    -- line text and abort cleanly instead of deciding on stale positions.
+    local line = vim.api.nvim_buf_get_lines(p.buf, h.sl, h.sl + 1, false)[1]
+    if line ~= MARKER then
+        h.resolved = "aborted"
+        return
+    end
+    vim.api.nvim_buf_del_extmark(p.buf, ns, h.ghost_id)
+    if h.hl_id then
+        vim.api.nvim_buf_del_extmark(p.buf, ns, h.hl_id)
+    end
+    if action == "applied" then
+        vim.api.nvim_buf_set_lines(p.buf, h.sl, h.sl + 1, false, {})
+        shift(p, i, -1)
+    else
+        vim.api.nvim_buf_set_lines(p.buf, h.sl, h.sl + h.count, false, h.old_lines)
+        vim.api.nvim_buf_set_lines(p.buf, h.sl + #h.old_lines, h.sl + #h.old_lines + 1, false, {})
+        shift(p, i, #h.old_lines - 1 - h.count)
+    end
+    h.resolved = action
+end
+
+--- Paint all hunks and arm the decision keymaps. Returns immediately.
+function M.render(path, edits)
     if pending then
         return "rejected: another proposal is pending"
     end
+    if type(edits) ~= "table" or #edits == 0 then
+        return "rejected: edits must be a non-empty list of {old_text, new_text}"
+    end
 
-    -- open the file (current window; task3 may float it)
+    -- open the file (current window)
     local buf = vim.fn.bufnr(path)
     if buf == -1 or not vim.api.nvim_buf_is_valid(buf) then
         vim.cmd("edit " .. vim.fn.fnameescape(path))
@@ -84,119 +158,144 @@ function M.render(path, old_str, new_str)
         vim.cmd("buffer " .. buf)
     end
 
-    -- Dirty-buffer guard: on accept the PYTHON side writes disk-based
-    -- content, so a buffer whose text diverges from disk would have its
-    -- unsaved changes silently clobbered. Reject and ask for :w first.
-    -- (A freshly :edit-ed buffer loads from disk, so it is clean by
-    -- definition.)
+    -- Dirty-buffer guard: on resolve the PYTHON side writes buffer content,
+    -- so a buffer whose text diverges from disk would commit unsaved work
+    -- silently. Reject and ask for :w first. (A freshly :edit-ed buffer
+    -- loads from disk, so it is clean by definition.)
+    local disk_lines = vim.fn.readfile(path)
+    if disk_lines == false then
+        return "rejected: cannot read " .. path .. " from disk"
+    end
     if vim.bo[buf].modified then
         local buf_text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
-        local disk = vim.fn.readfile(path)
-        if disk == false or buf_text ~= table.concat(disk, "\n") then
+        if buf_text ~= table.concat(disk_lines, "\n") then
             return "rejected: buffer has unsaved changes - save it (:w) and ask the agent again"
         end
     end
 
-    local range = find_old(buf, old_str)
-    if not range then
-        return "rejected: old_str not found in open buffer (disk changed?)"
+    -- Match every hunk up front against the DISK state (all-or-nothing:
+    -- no partial render if a later hunk fails).
+    local disk_text = table.concat(disk_lines, "\n")
+    local matches = {}
+    for i, e in ipairs(edits) do
+        local m = find_old(buf, e.old_text)
+        if not m then
+            return string.format("rejected: hunk %d: old_text not found in open buffer (disk changed?)", i)
+        end
+        matches[i] = m
     end
-    local sl, sc, el, ec = range[1], range[2], range[3], range[4]
 
-    -- Layout after insertion (0-based line numbers):
-    --   top  = sl                      marker line
-    --   sl+1 .. el+1                   old text (red)
-    --   after .. after+n-1             new text (green)
-    local new_lines = vim.split(new_str, "\n", { includeempty = true })
-    local n = #new_lines
-    local top = sl
-    vim.api.nvim_buf_set_lines(buf, top, top, false, { MARKER })
-    local after = el + 2 -- below the old text (shifted +1 by the marker)
-    vim.api.nvim_buf_set_lines(buf, after, after, false, new_lines)
+    local km = { buffer = buf }
+    local hunks = {}
+    -- Render sequentially on the live buffer; find_old per hunk keeps the
+    -- positions honest as earlier hunks shift the text.
+    for i, e in ipairs(edits) do
+        local m = find_old(buf, e.old_text) -- live buffer: earlier hunks shifted it
+        local sl, el = m[1], m[3]
+        local old_lines = vim.api.nvim_buf_get_lines(buf, sl, el + 1, false)
+        -- "" = pure delete: vim.split("", ...) would yield {""} (one real
+        -- empty line) — special-case it to zero lines.
+        local new_lines = e.new_text == "" and {}
+            or vim.split(e.new_text, "\n", { includeempty = true })
+        local count = #new_lines
 
-    -- highlights
-    local ids = {}
-    table.insert(ids, vim.api.nvim_buf_set_extmark(buf, ns, top, 0, {
-        end_col = #MARKER, hl_group = "McpProposalChoice",
-    }))
-    table.insert(ids, vim.api.nvim_buf_set_extmark(buf, ns, top, COL_A, {
-        end_col = COL_A + 1, hl_group = "McpProposalKey",
-    }))
-    table.insert(ids, vim.api.nvim_buf_set_extmark(buf, ns, top, COL_R, {
-        end_col = COL_R + 1, hl_group = "McpProposalKey",
-    }))
-    table.insert(ids, vim.api.nvim_buf_set_extmark(buf, ns, sl + 1, sc, {
-        end_line = el + 1, end_col = ec, hl_group = "DiffDelete",
-    }))
-    table.insert(ids, vim.api.nvim_buf_set_extmark(buf, ns, after, 0, {
-        end_line = after + n - 1, end_col = #new_lines[n], hl_group = "DiffAdd",
-    }))
+        -- replace old span with new lines, insert choice line above
+        vim.api.nvim_buf_set_lines(buf, sl, el + 1, false, new_lines)
+        vim.api.nvim_buf_set_lines(buf, sl, sl, false, { MARKER })
 
-    -- readonly while pending: navigate freely, block accidental edits
-    -- (which could also destroy the marker lines)
-    local prev_mod = vim.bo[buf].modifiable
-    vim.bo[buf].modifiable = false
+        -- ghost old lines below the choice line (virtual, not real text);
+        -- build quirk: each chunk wrapped in its own array
+        local ghost = {}
+        for _, l in ipairs(old_lines) do
+            table.insert(ghost, { { l, "McpGhostOld" } })
+        end
+        local h = { sl = sl, count = count, old_lines = old_lines, resolved = nil }
+        h.ghost_id = vim.api.nvim_buf_set_extmark(buf, ns, sl, 0, {
+            virt_lines = ghost,
+            virt_lines_above = false,
+            hl_mode = "combine",
+        })
+        h.start = sl + 1
+        if count > 0 then
+            h.hl_id = vim.api.nvim_buf_set_extmark(buf, ns, sl + 1, 0, {
+                end_line = sl + count,
+                hl_group = "DiffAdd",
+                hl_mode = "combine",
+            })
+        else
+            h.hl_id = nil
+        end
+        hunks[#hunks + 1] = h
+    end
 
-    -- the ONLY decision keymap: <CR> on the a/r character of a marker line
-    local opts = { buffer = buf }
+    -- decision keymaps (buffer-local, normal mode). Bare a/r are NEVER
+    -- mapped; the letters only matter under <CR> on a choice line.
+    local opts = km
     vim.keymap.set("n", "<CR>", function()
         if not pending then return end
         local c = vim.api.nvim_win_get_cursor(0)
-        -- this build may return {row, col} or {{row, col}} — unpack defensively
         local row, col = c[1], c[2]
         if type(row) == "table" then row, col = row[1], row[2] end
         local lnum = row - 1
-        if lnum ~= pending.top then return end
-        local line = vim.api.nvim_buf_get_lines(pending.buf, lnum, lnum + 1, false)[1]
-        if col == COL_A and line:sub(col + 1, col + 1) == "a" then
-            decided = "accepted"
-        elseif col == COL_R and line:sub(col + 1, col + 1) == "r" then
-            decided = "rejected"
+        for i, h in ipairs(pending.hunks) do
+            if lnum == h.sl then
+                local line = vim.api.nvim_buf_get_lines(pending.buf, lnum, lnum + 1, false)[1]
+                if col == COL_A and line:sub(col + 1, col + 1) == "a" then
+                    resolve(pending, i, "applied")
+                elseif col == COL_R and line:sub(col + 1, col + 1) == "r" then
+                    resolve(pending, i, "rejected")
+                end
+                return -- on a choice line but not on a letter: no-op
+            end
         end
-        -- anywhere else: no-op (proposal stays pending)
+    end, opts)
+    vim.keymap.set("n", "ct", function()
+        if not pending then return end
+        local h, i = hunk_at_cursor(pending)
+        if h then resolve(pending, i, "applied") end
+    end, opts)
+    vim.keymap.set("n", "co", function()
+        if not pending then return end
+        local h, i = hunk_at_cursor(pending)
+        if h then resolve(pending, i, "rejected") end
     end, opts)
 
-    pending = {
-        buf = buf, sl = sl, el = el, n = n, top = top,
-        after = after, ids = ids, prev_mod = prev_mod, opts = opts,
-    }
-    vim.cmd("echo 'nvim-mcp: put cursor on a/r of a choice line, press <CR>'")
+    pending = { buf = buf, hunks = hunks, km = km }
+    vim.cmd("echo 'nvim-mcp: " .. #hunks .. " hunk(s) pending - [a]/[r]+<CR> on a choice line, ct/co at a hunk'")
     vim.cmd("redraw!") -- force TUI frame; this build's UI lags buffer edits
     return "rendered"
 end
 
---- Non-blocking check. Returns nil while waiting; on a recorded decision,
---- cleans up, applies (accept) or undoes (reject), and returns the decision.
+--- Non-blocking check. Returns nil while any hunk is unresolved; when all
+--- are resolved, cleans up and returns the summary string.
 function M.decide()
-    if not pending or not decided then
-        return nil -- nothing (or still nothing) to report
-    end
-
     local p = pending
-    local d = decided
-    pending = nil
-    decided = nil
-
-    -- cleanup
-    for _, id in ipairs(p.ids) do
-        vim.api.nvim_buf_del_extmark(p.buf, ns, id)
+    if not p then
+        return nil
     end
-    vim.keymap.del("n", "<CR>", p.opts)
-    vim.bo[p.buf].modifiable = p.prev_mod
+    for _, h in ipairs(p.hunks) do
+        if not h.resolved then
+            return nil -- still waiting
+        end
+    end
 
-    if d == "accepted" then
-        -- drop the old text (highest first), then the marker line;
-        -- the new text (already in place) becomes the file content
-        vim.api.nvim_buf_set_lines(p.buf, p.sl + 1, p.el + 2, false, {})
-        vim.api.nvim_buf_set_lines(p.buf, p.top, p.top + 1, false, {})
-    else
-        -- reject: drop the new text, then the marker line;
-        -- buffer back to byte-identical original
-        vim.api.nvim_buf_set_lines(p.buf, p.after, p.after + p.n, false, {})
-        vim.api.nvim_buf_set_lines(p.buf, p.top, p.top + 1, false, {})
+    pending = nil
+    pcall(vim.keymap.del, "n", "<CR>", p.km)
+    pcall(vim.keymap.del, "n", "ct", p.km)
+    pcall(vim.keymap.del, "n", "co", p.km)
+    vim.api.nvim_buf_clear_namespace(p.buf, ns, 0, -1)
+
+    local a, r, ab = 0, 0, 0
+    for _, h in ipairs(p.hunks) do
+        if h.resolved == "applied" then a = a + 1
+        elseif h.resolved == "rejected" then r = r + 1
+        else ab = ab + 1 end
     end
     vim.cmd("redraw!")
-    return d
+    if ab > 0 then
+        return "aborted: review disturbed (undo?) - nothing written"
+    end
+    return string.format("resolved: applied=%d, rejected=%d", a, r)
 end
 
 return M

@@ -133,6 +133,18 @@ Resilience: stale-connection retry (nvim restart mid-session) + fail-fast clean 
 (reject: save first) — DONE, verified. Multi-file = sequential per-file rounds (verify live).
 README.md — DONE. PLANS.md sync — in progress.
 
+## Addendum (2026-10-07) — multi-hunk rework (epic nvim-mcp-avante-style, task1 DONE)
+
+The single-hunk accept-all/reject-all flow planned here was superseded:
+`diff.lua` now renders N hunks in one proposal (new text as real `DiffAdd`
+lines, old text as `virt_lines` ghosts, per-hunk choice line), the buffer is
+editable mid-review, decisions are per-hunk (`<CR>` on `a`/`r`, cursor-follow
+`ct`/`co`), and on full resolution Python writes the BUFFER content to disk
+(folding in user edits). `propose_edit` gained an `edits[]` param (legacy
+`old_str`/`new_str` wraps to one hunk). An "aborted" state guards
+undo-disturbed reviews. Usage: README.md; tracking:
+`.epic-tasks/nvim-mcp-avante-style/`.
+
 ## Conventions (repo)
 - gate: `zsh -n zsh/.zshenv zsh/.zshrc zsh/alias.sh && nvim --headless +q`
 - docs_sync: README.md (repo root); commit per task; tracking tick in same commit

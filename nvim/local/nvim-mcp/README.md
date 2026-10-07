@@ -2,8 +2,9 @@
 
 Neovim as an MCP server for AI agents (opencode). The flagship tool,
 `propose_edit`, gives the agent an **in-buffer, review-gated edit flow**:
-the AI proposes a change → it renders as a highlighted diff in *your* nvim
-buffer → you accept or reject from a choice line in the buffer → the agent learns the outcome.
+the AI proposes one or more hunks of a file → each renders as a highlighted
+diff in *your* nvim buffer (new text real, old text as ghost lines) → you
+accept or reject **per hunk** → the agent learns the outcome.
 
 ```
 opencode daemon ──MCP stdio──> .venv/bin/python server.py      (this project)
@@ -13,16 +14,18 @@ opencode daemon ──MCP stdio──> .venv/bin/python server.py      (this pro
                             your interactive nvim
                             ┌──────────────────────────────┐
                             │ lua/nvim_mcp/diff.lua        │
-                            │ render(): DiffDelete +       │
-                            │          DiffAdd extmarks,   │
-                            │          choice lines, <CR> │
-                            │ decide(): applies/undoes     │
+                            │ render(): per hunk — real    │
+                            │          new lines (DiffAdd) │
+                            │          + ghost old lines   │
+                            │          (virt_lines) +      │
+                            │          choice line         │
+                            │ decide(): counts resolved    │
                             └──────────────────────────────┘
                                   │
         Python polls decide() every 200 ms (non-blocking RPC)
                                   │
-   "accepted" → Python writes the file, clears the buffer's modified flag
-   "rejected" → buffer restored exactly; agent adapts
+   ALL hunks resolved → Python writes the BUFFER content to disk
+   (user's mid-review edits included), clears the modified flag
 ```
 
 **Why non-blocking:** a blocking RPC chunk (e.g. `vim.wait` inside one

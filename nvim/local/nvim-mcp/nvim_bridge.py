@@ -1,9 +1,10 @@
 """Bridge from this MCP server to the interactive nvim, via pynvim.
 
-One review round-trip per proposed edit: render() paints the diff in the
-user's nvim and returns; Python then polls decide() until the keypress —
-the human-in-the-loop lives on the PYTHON side because a blocking RPC
-chunk wedges this nvim build's event loop (see diff.lua header).
+One review round-trip per proposed multi-hunk edit: render() paints all
+hunks in the user's nvim and returns; Python then polls decide() until
+every hunk is resolved — the human-in-the-loop lives on the PYTHON side
+because a blocking RPC chunk wedges this nvim build's event loop (see
+diff.lua header).
 
 Socket discovery: our custom nvim build lacks `nvim --server-list`, so we
 glob the RPC socket dir, probe each candidate for liveness (sockets linger
@@ -131,9 +132,30 @@ def mark_clean(path: str) -> None:
     )
 
 
-def show_diff(path: str, old_str: str, new_str: str) -> str:
-    """Render the proposed edit in nvim; block (PYTHON side) until accept/reject.
+def get_lines(path: str) -> list:
+    """Buffer content for `path` as a line list (nvim_buf_get_lines).
 
+    After a resolved review the BUFFER is the source of truth (it may fold
+    in the user's mid-review edits), so the disk write uses this, not the
+    proposed text. Returns [] if the buffer is not open.
+    """
+    lines = run_lua(
+        """
+        local path = table.unpack(...) -- single-arg list: the arg itself
+        local buf = vim.fn.bufnr(path)
+        if buf == -1 or not vim.api.nvim_buf_is_valid(buf) then return {} end
+        return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        """,
+        [path],
+    )
+    return lines or []
+
+
+def show_diff(path: str, edits: list) -> str:
+    """Render the proposed multi-hunk edit in nvim; block (PYTHON side) until
+    every hunk is resolved.
+
+    `edits` is a list of {"old_text": ..., "new_text": ...}.
     Never raises: a missing/unreachable nvim is a clean rejection string the
     agent can report (and the disk write in propose_edit is gated behind a
     successful render, so no failure path can write blindly).
@@ -142,7 +164,7 @@ def show_diff(path: str, old_str: str, new_str: str) -> str:
         # pynvim packs the args list as ONE Lua table at `...`; unpack it.
         state = run_lua(
             "return require('nvim_mcp.diff').render(table.unpack(...))",
-            [path, old_str, new_str],
+            [path, edits],
         )
         if state != "rendered":
             return state
