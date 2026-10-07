@@ -223,13 +223,60 @@ function M.render(path, edits)
         return "rejected: edits must be a non-empty list of {old_text, new_text}"
     end
 
-    -- open the file (current window)
+    -- Show the target buffer WITHOUT stealing the user's view (task1):
+    --   open in a window of the current tab -> hop to it (no-op if already there)
+    --   open in another tab                 -> tab-switch + hop
+    --   not open anywhere                   -> :split in the current window
+    -- A float current window splits from a normal one instead (keeps the
+    -- float in place); with no normal window at all (pathological), fall
+    -- back to the old :edit behavior. No auto-close after the decision —
+    -- the user closes the split. Window discovery via nvim_list_wins
+    -- (covers hidden windows and all tab pages).
+    -- BUILD QUIRK: on this custom 0.11.6 build, normal windows report
+    -- relative = "" (not nil), so a float is a NON-EMPTY relative string.
+    local function is_float(w)
+        local r = vim.api.nvim_win_get_config(w).relative
+        return type(r) == "string" and r ~= ""
+    end
+
+    local function show_in_split()
+        local cur_tab = vim.api.nvim_get_current_tabpage()
+        local cur = vim.api.nvim_get_current_win()
+        if is_float(cur) then
+            for _, w in ipairs(vim.api.nvim_list_wins()) do
+                if vim.api.nvim_win_get_tabpage(w) == cur_tab and not is_float(w) then
+                    vim.api.nvim_set_current_win(w)
+                    break
+                end
+            end
+        end
+        if not pcall(vim.cmd, "split " .. vim.fn.fnameescape(path)) then
+            vim.cmd("edit " .. vim.fn.fnameescape(path))
+        end
+    end
+
     local buf = vim.fn.bufnr(path)
     if buf == -1 or not vim.api.nvim_buf_is_valid(buf) then
-        vim.cmd("edit " .. vim.fn.fnameescape(path))
+        show_in_split()
         buf = 0
     else
-        vim.cmd("buffer " .. buf)
+        local cur_tab = vim.api.nvim_get_current_tabpage()
+        local other
+        for _, w in ipairs(vim.api.nvim_list_wins()) do
+            if vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_buf(w) == buf then
+                if vim.api.nvim_win_get_tabpage(w) == cur_tab then
+                    vim.api.nvim_set_current_win(w)
+                    other = nil
+                    break
+                elseif not other then
+                    other = w
+                end
+            end
+        end
+        if other then
+            vim.api.nvim_set_current_tabpage(vim.api.nvim_win_get_tabpage(other))
+            vim.api.nvim_set_current_win(other)
+        end
     end
 
     -- Dirty-buffer guard: on resolve the PYTHON side writes buffer content,

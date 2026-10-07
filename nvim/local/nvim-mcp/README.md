@@ -68,6 +68,18 @@ quux = 300       ← new text (green, real line)
 The buffer stays **editable** while the proposal is pending — anything you
 type is folded into the disk write on resolution.
 
+### Showing the target buffer
+
+The render never steals your view:
+
+- target buffer open in a window of the **current tab** → hop to it
+- open in **another tab** → switch tab + hop
+- **not open** → open in a **split** in the current window
+
+If the current window is a float, the split is taken from a normal window
+instead (the float keeps its place). The split is **not** auto-closed after
+the decision — you close it when done.
+
 Per-hunk decisions:
 
 | Action | Effect |
