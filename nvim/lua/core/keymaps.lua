@@ -23,5 +23,6 @@ map("n", "<leader>uh", function() require("snacks.notifier").show_history() end,
 if vim.g.opts.opencode then
     map({ "n", "v" }, "<leader>oa", function() require("opencode").ask("@this: ") end, { desc = "Ask OpenCode" })
     map({ "n", "v" }, "<leader>ox", function() require("opencode").select() end, { desc = "Select OpenCode" })
+    map({ "n", "v" }, "<leader>os", function() require("opencode").pick_session() end, { desc = "Pick OpenCode session" })
 end
 
