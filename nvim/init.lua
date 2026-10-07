@@ -1,6 +1,12 @@
 vim.g.mapleader = " "
 vim.g.maplocalleader = "\\"
 
+-- Optional plugins: set to true to enable, then restart nvim.
+vim.g.opts = {
+    opencode = false, -- opencode.nvim daemon integration
+    minuet = false,   -- AI ghost text via Ollama
+}
+
 -- core
 require("core.options")
 require("core.keymaps")

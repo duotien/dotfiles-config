@@ -1,0 +1,20 @@
+// nvim-mcp — add under "mcp"."servers" in ~/.config/opencode/opencode.jsonc
+// (applied manually; user-managed config).
+//
+// The daemon spawns this on session start and kills it on disconnect —
+// no port, no service, nothing listening on the network.
+//
+// {env:HOME} is opencode's documented substitution (expanded before parsing;
+// empty string if unset — HOME is always set on Linux). Absolute paths on
+// purpose: the daemon starts this process with its OWN working directory, so
+// relative paths would break. The interpreter is the venv's python (not
+// system python) so mcp/pynvim resolve from .venv — the exact frozen set in
+// uv.lock.
+"nvim-mcp": {
+    "type": "local",
+    "command": [
+        "{env:HOME}/Workspaces/GIT/dotfiles-config/nvim/local/nvim-mcp/.venv/bin/python",
+        "{env:HOME}/Workspaces/GIT/dotfiles-config/nvim/local/nvim-mcp/server.py"
+    ],
+    "disabled": false
+}

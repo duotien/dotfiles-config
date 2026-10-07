@@ -40,3 +40,14 @@ luac.out
 *.hex
 
 zsh/.zcompdump
+
+# scratch / logs (tmux pipe-pane tee, test artifacts)
+.tmp/
+
+# linter cache
+.ruff_cache/
+
+# local agent state (tracking ledger, skill install, agent instructions) — never commit
+AGENTS.md
+.epic-tasks/
+.opencode/

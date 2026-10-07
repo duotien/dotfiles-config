@@ -1,5 +1,6 @@
 return {
     "nickjvandyke/opencode.nvim",
+    enabled = vim.g.opts.opencode,
     -- main branch = OpenCode v2 (what we run)
     config = function(opts)
         vim.g.opencode_opts = opts

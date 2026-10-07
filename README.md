@@ -15,6 +15,9 @@ This repository contains my personal dotfiles configuration for a customized dev
 - snacks.nvim: dashboard, fuzzy picker (files/grep/buffers/git), notifier, zen mode, smooth scroll, quickfile, bigfile
 - which-key.nvim keybinding popups, tokyonight colorscheme
 - OpenCode v2 integration (`<leader>oa`/`<leader>ox`)
+- nvim-mcp: local MCP server (Python, official `mcp` SDK v2, `uv` venv) exposing Neovim
+  to opencode — in-buffer, review-gated AI edits (local plugin in `nvim/local/`;
+  optional — register via the included `opencode.jsonc.snippet`)
 - mini.pairs auto-pairing, lazydev for `vim.*` completion in this config
 - Custom keybindings with leader key (space) and local leader (\)
 

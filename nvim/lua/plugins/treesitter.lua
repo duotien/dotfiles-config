@@ -5,7 +5,7 @@ return {
     build = ":TSUpdate",
     config = function()
         require("nvim-treesitter.configs").setup({
-            ensure_installed = { "lua", "python", "json", "bash", "markdown" },
+            ensure_installed = { "lua", "python", "json", "bash", "markdown", "yaml" },
             highlight = { enable = true },
             indent = { enable = true },
         })
