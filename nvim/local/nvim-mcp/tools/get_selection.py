@@ -37,6 +37,8 @@ def get_selection() -> str:
     """
     try:
         mode, cursor, anchor = nvim_bridge.get_visual_state()
+    except nvim_bridge.StaleProtocol as e:
+        return str(e)
     except Exception as e:  # noqa: BLE001 - clean MCP string, not a traceback
         return f"error: cannot reach nvim ({type(e).__name__}: {e})"
 

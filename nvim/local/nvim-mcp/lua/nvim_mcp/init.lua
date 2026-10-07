@@ -6,6 +6,12 @@
 -- diff review lives in nvim_mcp.diff.
 local M = {}
 
+-- Protocol version shared with the Python bridge (task3 fix 2). Bump in
+-- lockstep with nvim_bridge.PROTOCOL_VERSION whenever any Python<->Lua call
+-- shape changes; the bridge checks it on attach and fails loudly ("MCP server
+-- stale, restart") on drift instead of a cryptic reject.
+M.VERSION = 1
+
 function M.setup() end
 
 ---@param text string

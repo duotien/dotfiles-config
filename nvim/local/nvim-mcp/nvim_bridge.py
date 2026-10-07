@@ -33,9 +33,26 @@ import pynvim
 
 _nvim = None
 _nvim_path = None
+_nvim_is_tty = False
 # pynvim's sync session is not thread-safe; the visual-anchor poller thread
 # shares it with tool calls, so serialize every RPC.
 _rpc_lock = threading.Lock()
+
+# task3 fix 2: Lua<->Python protocol handshake. Bump PROTOCOL_VERSION in
+# lockstep with lua/nvim_mcp/init.lua's M.VERSION whenever a call shape
+# changes; the bridge compares them on attach and fails loudly on drift. A
+# stale server process (old Python, fresh Lua) would otherwise give a
+# cryptic reject like "edits must be a non-empty list".
+PROTOCOL_VERSION = 1
+
+
+class StaleProtocol(RuntimeError):
+    """The running MCP server's Python is out of sync with the Lua module."""
+
+
+def _pid_of(path: str) -> int:
+    """Socket path nvim.<pid>.0 -> pid."""
+    return int(path.rsplit("/", 1)[1].rsplit(".", 2)[1])
 
 
 def _has_tty(pid: int) -> bool:
@@ -84,27 +101,72 @@ def discover_socket() -> str:
             probe.close()
     if not live:
         raise RuntimeError("No running neovim instance found (no live RPC socket)")
-    interactive = [
-        p for p in live
-        if _has_tty(int(p.rsplit("/", 1)[1].rsplit(".", 2)[1]))
-    ]
+    interactive = [p for p in live if _has_tty(_pid_of(p))]
     return (interactive or live)[0]
 
 
 def attach():
     """Connect once; the MCP server process lives across tool calls, so reuse the connection instead of re-attaching per call."""
-    global _nvim, _nvim_path
+    global _nvim, _nvim_path, _nvim_is_tty
     if _nvim is None:
         _nvim_path = discover_socket()
+        _nvim_is_tty = _has_tty(_pid_of(_nvim_path))
         _nvim = pynvim.attach("socket", path=_nvim_path)
+        _check_version(_nvim)
+    return _nvim
+
+
+def _check_version(nvim) -> None:
+    """task3 fix 2: verify the Lua module speaks the same protocol version.
+
+    A mismatch means the running MCP server process is STALE (its Python was
+    loaded before a Lua edit) — surface an explicit restart message instead of
+    letting a drifted call shape produce a cryptic reject. A version-read
+    failure is not fatal (don't block attach on it).
+    """
+    try:
+        got = nvim.exec_lua("return require('nvim_mcp').VERSION", [])
+    except Exception:  # noqa: BLE001
+        return
+    if got != PROTOCOL_VERSION:
+        raise StaleProtocol(
+            "MCP server is stale vs the nvim Lua module "
+            f"(protocol {got} != {PROTOCOL_VERSION}) - restart the opencode "
+            "service (opencode service restart) so the server reloads this Python"
+        )
+
+
+def ensure_attached():
+    """attach() plus task3 fix 1: per-call target re-verification.
+
+    If the current connection is to a NON-interactive instance (headless /
+    --embed child) and an interactive TTY instance now exists, migrate to it.
+    The one-shot cached attach (fix 1's amplifier) otherwise sticks to the
+    first instance forever even after the user's real nvim appears (the
+    transport never dies, so no re-discovery fires). Migration is
+    one-directional (non-TTY -> TTY): we NEVER swap between two live TTYs
+    (surprise) nor fall TTY -> non-TTY. Mid-review code must NOT call this —
+    it uses _exec_lua(allow_rediscovery=False) directly.
+    """
+    if _nvim is None:
+        return attach()
+    if not _nvim_is_tty:
+        try:
+            target = discover_socket()
+        except RuntimeError:
+            return _nvim  # no live instance; keep (death handled by run_lua)
+        if _has_tty(_pid_of(target)) and target != _nvim_path:
+            invalidate()
+            return attach()
     return _nvim
 
 
 def invalidate() -> None:
     """Drop a (possibly dead) cached connection; next attach() re-discovers."""
-    global _nvim, _nvim_path
+    global _nvim, _nvim_path, _nvim_is_tty
     _nvim = None
     _nvim_path = None
+    _nvim_is_tty = False
 
 
 def run_lua(code: str, args: list) -> Any:
@@ -126,11 +188,12 @@ def _exec_lua(code: str, args: list, allow_rediscovery: bool = True) -> Any:
     pending state lives in the rendered instance's module scope, and a
     re-discovery that lands elsewhere would poll the wrong nvim's decide().
     """
-    nvim = _nvim
-    if nvim is None:
-        if not allow_rediscovery:
+    if not allow_rediscovery:
+        if _nvim is None:
             raise OSError("nvim connection lost")
-        nvim = attach()
+        nvim = _nvim
+    else:
+        nvim = ensure_attached()
     with _rpc_lock:
         return nvim.exec_lua(code, args)
 
@@ -295,6 +358,9 @@ def show_diff(path: str, edits: list) -> str:
                 return REJECT_RESTART
             if decision is not None:
                 return decision
+    except StaleProtocol as e:
+        invalidate()
+        return str(e)
     except Exception as e:  # noqa: BLE001 - surface a clean MCP string, not a traceback
         invalidate()
         return f"rejected: cannot reach nvim ({type(e).__name__}: {e})"

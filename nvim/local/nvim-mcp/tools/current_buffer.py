@@ -31,6 +31,8 @@ def current_buffer() -> str:
         )
         if isinstance(info, list):
             info = info[0]
+    except nvim_bridge.StaleProtocol as e:
+        return str(e)
     except Exception as e:  # noqa: BLE001 - clean MCP string, not a traceback
         return f"error: cannot reach nvim ({type(e).__name__}: {e})"
     return json.dumps(info)
